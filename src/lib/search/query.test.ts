@@ -166,6 +166,12 @@ describe("parseQuery: qualifiers", () => {
 });
 
 describe("compareVersions", () => {
+  it("orders a pre-release before its release", () => {
+    expect(compareVersions("1.0.0-rc1", "1.0.0")).toBe(-1);
+    expect(compareVersions("1.0.0", "1.0.0-rc1")).toBe(1);
+    expect(compareVersions("1.0.0+build.5", "1.0.0")).toBe(0);
+  });
+
   it("compares numeric segments numerically", () => {
     expect(compareVersions("1.10.0", "1.9.2")).toBe(1);
     expect(compareVersions("1.9.2", "1.10.0")).toBe(-1);

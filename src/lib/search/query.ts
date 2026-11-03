@@ -111,9 +111,7 @@ function parseVersionFilter(value: string): VersionFilter {
 }
 
 /** Compares dotted versions numerically where possible ("1.10.0" > "1.9.2"). */
-export function compareVersions(a: string, b: string): number {
-  const pa = a.replace(/^v/i, "").split(/[.\-+]/);
-  const pb = b.replace(/^v/i, "").split(/[.\-+]/);
+function compareParts(pa: string[], pb: string[]): number {
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
     const x = pa[i];
     const y = pb[i];
@@ -128,6 +126,22 @@ export function compareVersions(a: string, b: string): number {
     }
   }
   return 0;
+}
+
+/** Semver-like ordering: numeric core first, then a pre-release ("-rc1") sorts before its release. Build metadata is ignored. */
+export function compareVersions(a: string, b: string): number {
+  const split = (v: string) => {
+    const [core, ...pre] = v.replace(/^v/i, "").split("+")[0].split("-");
+    return { core: core.split("."), pre: pre.join("-") };
+  };
+  const va = split(a);
+  const vb = split(b);
+  const core = compareParts(va.core, vb.core);
+  if (core !== 0) return core;
+  if (va.pre === vb.pre) return 0;
+  if (!va.pre) return 1;
+  if (!vb.pre) return -1;
+  return compareParts(va.pre.split("."), vb.pre.split("."));
 }
 
 export function matchesVersion(version: string, filter: VersionFilter): boolean {
