@@ -1,99 +1,83 @@
 # Ombor
 
-A JFrog/Nexus-style web UI for the **self-hosted GitLab** Package Registry and Container Registry.
-Browse, search, publish, delete and clean up packages across all your GitLab groups and projects from one place.
+**A Nexus/Artifactory-style UI for the self-hosted GitLab Package & Container Registry.**
 
-Users sign in with GitLab OAuth. Every GitLab API call is made with **the signed-in user's own token**,
-so GitLab's roles decide what each person can see and do (Reporter: view · Developer: publish · Maintainer: delete / cleanup).
+Browse, search, publish and clean up packages across every GitLab group from one place.
+Users sign in with GitLab; every request runs with their own token, so GitLab roles decide what they can see and do.
+
+![Overview](docs/screenshots/overview.png)
 
 ## Features
 
-| Area | What you get |
-|------|--------------|
-| Overview | Package totals, storage of accessible projects, publishing activity (CI vs manual), recent packages, GitLab health |
-| Packages | Cross-group package list with format/status/name filters, multi-select bulk delete |
-| Package detail | Versions, files + checksums, pipelines, install snippets per client, delete version/file |
-| Repositories | Per-project registry view, storage stats, container images and tags (delete tags/repositories) |
-| Search | Name, `name@version` and checksum (sha256/sha1/md5) search, container images |
-| Publish | Upload Generic packages and Helm charts from the browser (streamed to GitLab) |
-| Client setup | Copy-paste config for npm, Maven, PyPI, NuGet, Go, Composer, Conan, Helm, Generic, Docker + CI snippets |
-| Security | Registry hygiene checks on any edition; GitLab Ultimate vulnerabilities when available |
-| Cleanup policies | Keep-latest-N / older-than-N-days rules with preview, dry-run, run-now and a scheduler |
-| Audit log | Every login, publish, delete, policy and settings change; filters and CSV export |
-| Admin | Ombor users (admin role, block, revoke sessions) and GitLab connection settings |
+- **One catalog**: npm, Maven, PyPI, NuGet, Go, Composer, Conan, Helm, Generic, Debian, RubyGems, Terraform and container images across all groups and projects
+- **Package detail**: versions, files with checksums, pipelines, copy-paste install commands
+- **Search**: by name, `name@version`, or sha256/sha1/md5
+- **Publish**: upload Generic packages and Helm charts from the browser
+- **Cleanup policies**: keep-latest-N / older-than-N-days, with preview, dry run and a scheduler
+- **Security**: registry hygiene checks on any edition, plus vulnerabilities on GitLab Ultimate
+- **Audit log**: logins, publishes, deletes and settings changes, with CSV export
+- **Admin**: Ombor users (admin role, block, revoke sessions) and GitLab connection settings
 
-## Quick start (Docker Compose)
+| Packages | Package detail |
+|---|---|
+| ![Packages](docs/screenshots/packages.png) | ![Package detail](docs/screenshots/package-detail.png) |
+| **Search** | **Container tags** |
+| ![Search](docs/screenshots/search.png) | ![Container tags](docs/screenshots/container-tags.png) |
+| **Cleanup policies** | **Security** |
+| ![Cleanup](docs/screenshots/cleanup.png) | ![Security](docs/screenshots/security.png) |
 
-1. **Create a GitLab OAuth application** (Admin Area → Applications, or User Settings → Applications):
+## Quick start
+
+1. **Create a GitLab OAuth app** (Admin Area → Applications):
    - Redirect URI: `https://<ombor-host>/api/auth/callback`
-   - Scopes: `api`, `read_user` · Confidential: yes
-2. Configure and start:
+   - Scopes: `api` and `read_user`
+   - Confidential: on
+2. **Run Ombor:**
    ```bash
-   cp .env.example .env
-   # set APP_URL, SESSION_SECRET (openssl rand -base64 48), POSTGRES_PASSWORD
+   cp .env.example .env   # set APP_URL, SESSION_SECRET, POSTGRES_PASSWORD
    docker compose up -d --build
    ```
-3. Open `APP_URL`. The setup wizard asks for the GitLab URL and the OAuth Client ID/Secret.
-   **The first user to sign in becomes the Ombor admin.**
+3. **Open `APP_URL`.** The setup wizard asks for the GitLab URL and the OAuth Client ID/Secret.
+   **The first user to sign in becomes the admin.**
 
-Health check: `GET /api/health` → `{"status":"ok","database":"ok"}`.
-
-### Self-signed GitLab certificates
-
-Put your CA bundle at `./certs/ca.crt`, then uncomment `NODE_EXTRA_CA_CERTS` and the `volumes` entry for `app` in `docker-compose.yml`.
-
-### Scheduled cleanup
-
-Scheduled cleanup policies run without a user session, so they use a **service token**:
-an admin sets it in **Settings → Cleanup service token** (a GitLab group/project access token or PAT with `api` scope
-and Maintainer role). Interval: `CLEANUP_INTERVAL_MINUTES` (default 1440). "Run now" in the UI uses your own token.
+Health check: `GET /api/health`.
 
 ## Configuration
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `APP_URL` | yes | Public URL of Ombor; used for the OAuth redirect URI |
-| `SESSION_SECRET` | yes | ≥32 chars. Encrypts OAuth tokens and stored secrets (AES-256-GCM). Changing it signs everyone out and invalidates stored secrets |
-| `DATABASE_URL` | yes | PostgreSQL URL (compose builds it from `POSTGRES_PASSWORD`) |
-| `COOKIE_SECURE` | no | Force `Secure` cookies on/off (default: on in production). Set `false` only for plain-HTTP test setups |
-| `CLEANUP_INTERVAL_MINUTES` | no | Scheduler interval (default 1440) |
-| `NODE_EXTRA_CA_CERTS` | no | CA bundle for self-signed GitLab |
+| Variable | Required | Purpose |
+|---|---|---|
+| `APP_URL` | yes | Public URL. The OAuth redirect URI is `${APP_URL}/api/auth/callback` |
+| `SESSION_SECRET` | yes | At least 32 characters (`openssl rand -base64 48`). Encrypts tokens and secrets at rest |
+| `DATABASE_URL` | yes | PostgreSQL. Compose builds it from `POSTGRES_PASSWORD` |
+| `NODE_EXTRA_CA_CERTS` | no | CA bundle for a self-signed GitLab certificate |
+| `CLEANUP_INTERVAL_MINUTES` | no | How often scheduled cleanup runs. Default 1440 |
+| `COOKIE_SECURE` | no | Set `false` only for plain-HTTP test setups |
 
-GitLab URL and OAuth credentials live in the database and are editable in **Settings** without a restart.
+The GitLab URL and OAuth credentials are stored in the database and can be changed in **Settings** without a restart.
+Scheduled cleanup needs a service token (`api` scope, Maintainer), which is also set in **Settings**.
 
-## Security model
+## Permissions
 
-- OAuth access/refresh tokens are stored server-side, encrypted; the browser only holds an opaque session id (httpOnly cookie).
-  Access tokens are refreshed automatically.
-- The OAuth client secret and the cleanup service token are encrypted at rest.
-- Write operations are checked against the user's GitLab role before calling GitLab, and GitLab enforces them again.
-- All write operations are recorded in the audit log.
+| GitLab role | In Ombor |
+|---|---|
+| Reporter | View packages and images |
+| Developer | Publish |
+| Maintainer | Delete versions, files and tags; manage cleanup policies |
+
+## Security
+
+- OAuth tokens are stored server-side and encrypted with AES-256-GCM; the browser only gets an opaque httpOnly session cookie.
+- Access tokens are refreshed automatically.
+- Every write is checked against the user's GitLab role and written to the audit log.
 
 ## Development
 
 ```bash
 pnpm install
-cp .env.example .env.local   # set DATABASE_URL, SESSION_SECRET, APP_URL=http://localhost:3000
+cp .env.example .env.local
 pnpm dev
 ```
 
-The database schema is created/updated automatically on startup (`src/lib/db/migrate.ts`).
+The database schema is applied automatically on startup. Checks: `pnpm exec tsc --noEmit`, `pnpm lint`, `pnpm build`.
 
-```bash
-pnpm exec tsc --noEmit   # typecheck
-pnpm lint                # eslint
-pnpm build               # production build
-```
-
-## Project layout
-
-```
-src/app/(app)/        signed-in pages (dashboard, packages, repositories, search, publish, …)
-src/app/(auth)/       sign-in
-src/app/(setup)/      first-run wizard
-src/app/api/          OAuth callback, logout, setup, publish upload, audit export, health
-src/lib/gitlab/       GitLab REST client + typed APIs (packages, projects, groups, registry, catalog)
-src/lib/session/      DB-backed sessions with token refresh
-src/lib/db/           Drizzle schema + startup migration
-src/components/ombor/ shared UI building blocks
-```
+**Stack:** Next.js 16, React 19, Tailwind CSS 4, PostgreSQL with Drizzle.
