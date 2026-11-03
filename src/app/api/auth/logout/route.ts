@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteSession } from "@/lib/session";
+import { deleteSession, getSession } from "@/lib/session";
+import { logAudit } from "@/lib/audit";
 
-export async function POST(req: NextRequest) {
+async function logout(req: NextRequest) {
+  const session = await getSession();
+  if (session) {
+    await logAudit({ action: "auth.logout", targetType: "user", target: session.username });
+  }
   await deleteSession();
-  return NextResponse.redirect(new URL("/login", req.url));
+  return NextResponse.redirect(new URL("/login", req.url), { status: 303 });
 }
 
-export async function GET(req: NextRequest) {
-  await deleteSession();
-  return NextResponse.redirect(new URL("/login", req.url));
-}
+// POST only: a GET logout can be triggered cross-site by an <img> tag.
+export const POST = logout;

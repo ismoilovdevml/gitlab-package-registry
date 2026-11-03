@@ -1,33 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const PUBLIC_ROUTES = ["/login", "/setup", "/api/setup", "/api/auth"];
+// Cheap cookie-presence gate. Real validation happens server-side in verifySession().
+const PUBLIC_PREFIXES = ["/login", "/setup", "/api/setup", "/api/auth", "/api/health"];
+const SESSION_COOKIE = "ombor_session";
 
 export default function proxy(req: NextRequest) {
-  const { pathname } = req.nextUrl;
+  const { pathname, search } = req.nextUrl;
 
-  // Allow public routes
-  if (PUBLIC_ROUTES.some((route) => pathname.startsWith(route))) {
+  if (PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
     return NextResponse.next();
   }
 
-  // Allow static files and Next.js internals
-  if (
-    pathname.startsWith("/_next") ||
-    pathname.startsWith("/favicon") ||
-    pathname.includes(".")
-  ) {
-    return NextResponse.next();
-  }
-
-  // Check for session cookie
-  const sessionCookie = req.cookies.get("glpr_session");
-  if (!sessionCookie?.value) {
-    return NextResponse.redirect(new URL("/login", req.url));
+  if (!req.cookies.get(SESSION_COOKIE)?.value) {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const login = new URL("/login", req.url);
+    if (pathname !== "/") login.searchParams.set("next", `${pathname}${search}`);
+    return NextResponse.redirect(login);
   }
 
   return NextResponse.next();
 }
 
+// /api/publish is excluded so large uploads stream straight to the route handler
+// (the proxy would otherwise buffer the body); that handler verifies the session itself.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/publish|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|txt)$).*)"],
 };

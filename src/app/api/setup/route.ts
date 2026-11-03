@@ -1,64 +1,66 @@
 import { NextRequest, NextResponse } from "next/server";
-import { saveSetupSettings, isSetupComplete, getSettings } from "@/lib/setup";
+import { z } from "zod";
+import { saveSetupSettings, isSetupComplete, getSettings, normalizeGitlabUrl } from "@/lib/setup";
 import { createGitLabClient } from "@/lib/gitlab/client";
+import { getSession } from "@/lib/session";
+import { getRedirectUri } from "@/lib/auth/gitlab-oauth";
+
+const bodySchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("info") }),
+  z.object({ action: z.literal("test"), gitlabUrl: z.string().min(1) }),
+  z.object({
+    action: z.literal("save"),
+    gitlabUrl: z.string().min(1),
+    clientId: z.string().min(1),
+    clientSecret: z.string().min(1),
+  }),
+]);
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const { action } = body;
+  const parsed = bodySchema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json({ ok: false, error: "Invalid request" }, { status: 400 });
+  }
+  const body = parsed.data;
+  const setupDone = await isSetupComplete();
 
-  if (action === "info") {
+  if (body.action === "info") {
     const settings = await getSettings();
     return NextResponse.json({
       gitlabUrl: settings?.gitlabUrl || null,
-      setupComplete: settings?.setupComplete || false,
+      setupComplete: setupDone,
+      redirectUri: getRedirectUri(req.url),
     });
   }
 
-  if (action === "test") {
-    const { gitlabUrl } = body;
-    if (!gitlabUrl) {
-      return NextResponse.json({ ok: false, error: "GitLab URL kiritilmadi" });
-    }
-
-    try {
-      const client = createGitLabClient({ baseUrl: gitlabUrl, pat: "" });
-      const result = await client.testConnection();
-      return NextResponse.json(result);
-    } catch {
-      return NextResponse.json({
-        ok: false,
-        error: "GitLab serverga ulanib bo'lmadi",
-      });
+  // After setup, only admins may probe URLs (prevents using this endpoint as an open SSRF proxy).
+  if (setupDone) {
+    const session = await getSession();
+    if (!session?.isAdmin) {
+      return NextResponse.json({ ok: false, error: "Setup is already complete" }, { status: 403 });
     }
   }
 
-  if (action === "save") {
-    const setupDone = await isSetupComplete();
-    if (setupDone) {
-      return NextResponse.json({
-        ok: false,
-        error: "Sozlash allaqachon tugallangan",
-      });
-    }
-
-    const { gitlabUrl, clientId, clientSecret } = body;
-    if (!gitlabUrl || !clientId || !clientSecret) {
-      return NextResponse.json({
-        ok: false,
-        error: "Barcha maydonlarni to'ldiring",
-      });
-    }
-
-    try {
-      await saveSetupSettings({ gitlabUrl, clientId, clientSecret });
-      return NextResponse.json({ ok: true });
-    } catch (e) {
-      return NextResponse.json({
-        ok: false,
-        error: e instanceof Error ? e.message : "Saqlashda xatolik",
-      });
-    }
+  let gitlabUrl: string;
+  try {
+    gitlabUrl = normalizeGitlabUrl(body.gitlabUrl);
+  } catch {
+    return NextResponse.json({ ok: false, error: "Enter a valid URL, e.g. https://gitlab.example.com" });
   }
 
-  return NextResponse.json({ ok: false, error: "Noma'lum amal" }, { status: 400 });
+  if (body.action === "test") {
+    const result = await createGitLabClient({ baseUrl: gitlabUrl, token: "" }).testConnection();
+    return NextResponse.json(result);
+  }
+
+  // action === "save" (first-run only; admins change settings via /admin/settings)
+  if (setupDone) {
+    return NextResponse.json({ ok: false, error: "Setup is already complete" }, { status: 409 });
+  }
+  try {
+    await saveSetupSettings({ gitlabUrl, clientId: body.clientId, clientSecret: body.clientSecret });
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : "Failed to save settings" });
+  }
 }

@@ -3,92 +3,93 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import {
-  LayoutDashboard,
-  Package,
-  FolderGit2,
-  Settings,
-  Moon,
-  Sun,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
-import { useTheme } from "next-themes";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { NAV_SECTIONS } from "./nav-items";
+import { OmborLogo } from "./logo";
 
-const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/packages", label: "Packages", icon: Package },
-  { href: "/projects", label: "Projects", icon: FolderGit2 },
-];
+export interface ShellUser {
+  username: string;
+  name: string | null;
+  avatarUrl: string | null;
+  isAdmin: boolean;
+}
 
-const adminItems = [
-  { href: "/admin/settings", label: "Settings", icon: Settings },
-];
-
-export function Sidebar() {
+export function SidebarNav({
+  user,
+  gitlabHost,
+  onNavigate,
+}: {
+  user: ShellUser;
+  gitlabHost: string;
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
-  const { theme, setTheme } = useTheme();
+  const initials = (user.name || user.username)
+    .split(/\s+/)
+    .map((p) => p[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 
   return (
-    <aside className="hidden md:flex flex-col w-64 border-r bg-card h-screen sticky top-0">
-      <div className="p-4">
-        <Link href="/dashboard" className="flex items-center gap-2">
-          <Package className="h-6 w-6 text-primary" />
-          <span className="font-semibold text-lg">GLPR</span>
-        </Link>
-      </div>
+    <div className="flex h-full flex-col gap-6 bg-sidebar px-3 py-5 text-sidebar-foreground">
+      <Link href="/dashboard" onClick={onNavigate} className="flex items-center gap-2.5 px-2.5">
+        <OmborLogo />
+        <span className="flex min-w-0 flex-col">
+          <span className="text-base font-semibold tracking-tight text-white">Ombor</span>
+          <span className="truncate text-[11px] text-sidebar-muted">{gitlabHost}</span>
+        </span>
+      </Link>
 
-      <Separator />
-
-      <nav className="flex-1 p-3 space-y-1">
-        {navItems.map((item) => (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={cn(
-              "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
-              pathname.startsWith(item.href)
-                ? "bg-primary/10 text-primary"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            )}
-          >
-            <item.icon className="h-4 w-4" />
-            {item.label}
-          </Link>
-        ))}
-
-        <Separator className="my-3" />
-
-        {adminItems.map((item) => (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={cn(
-              "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
-              pathname.startsWith(item.href)
-                ? "bg-primary/10 text-primary"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            )}
-          >
-            <item.icon className="h-4 w-4" />
-            {item.label}
-          </Link>
+      <nav aria-label="Main" className="flex flex-col gap-5 overflow-y-auto">
+        {NAV_SECTIONS.filter((s) => !s.adminOnly || user.isAdmin).map((section) => (
+          <div key={section.title} className="flex flex-col gap-0.5">
+            <span className="px-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-sidebar-muted">
+              {section.title}
+            </span>
+            {section.items.map((item) => {
+              const base = item.href.split("?")[0];
+              const active = pathname === base || pathname.startsWith(`${base}/`);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={onNavigate}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "flex min-h-9 items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium transition-colors",
+                    active
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-white",
+                  )}
+                >
+                  <item.icon className="size-[18px]" strokeWidth={1.8} />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
         ))}
       </nav>
 
-      <div className="p-3 border-t">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start gap-2"
-          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-        >
-          <Sun className="h-4 w-4 dark:hidden" />
-          <Moon className="h-4 w-4 hidden dark:block" />
-          <span className="dark:hidden">Qorong&apos;u rejim</span>
-          <span className="hidden dark:block">Yorug&apos; rejim</span>
-        </Button>
+      <div className="mt-auto flex items-center gap-2.5 border-t border-sidebar-border px-2.5 pt-4">
+        <Avatar className="size-8">
+          <AvatarImage src={user.avatarUrl || undefined} alt="" />
+          <AvatarFallback className="bg-accent text-xs font-semibold text-accent-foreground">{initials}</AvatarFallback>
+        </Avatar>
+        <span className="flex min-w-0 flex-col text-[13px]">
+          <span className="truncate font-medium text-white">{user.name || user.username}</span>
+          <span className="truncate text-xs text-sidebar-muted">{user.isAdmin ? "Registry admin" : `@${user.username}`}</span>
+        </span>
       </div>
+    </div>
+  );
+}
+
+export function Sidebar(props: { user: ShellUser; gitlabHost: string }) {
+  return (
+    <aside className="sticky top-0 hidden h-screen w-60 shrink-0 lg:block">
+      <SidebarNav {...props} />
     </aside>
   );
 }

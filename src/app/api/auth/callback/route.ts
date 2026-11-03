@@ -1,16 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSettings } from "@/lib/setup";
+import crypto from "crypto";
+import { eq, sql } from "drizzle-orm";
+import { getSetting, getSettings, setSetting } from "@/lib/setup";
 import {
   buildOAuthAuthorizeUrl,
   exchangeCodeForToken,
   getGitLabUser,
-  createPAT,
+  getRedirectUri,
 } from "@/lib/auth/gitlab-oauth";
 import { createSession } from "@/lib/session";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
-import crypto from "crypto";
+import { logAudit } from "@/lib/audit";
+
+const STATE_COOKIE = "ombor_oauth_state";
+
+function loginError(req: NextRequest, message: string) {
+  const res = NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(message)}`, req.url));
+  res.cookies.delete(STATE_COOKIE);
+  return res;
+}
+
+function safeNext(value: string | null | undefined): string {
+  // Only allow same-origin relative paths.
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/dashboard";
+  return value;
+}
 
 export async function GET(req: NextRequest) {
   const settings = await getSettings();
@@ -19,88 +34,74 @@ export async function GET(req: NextRequest) {
   }
 
   const { searchParams } = new URL(req.url);
-  const action = searchParams.get("action");
-  const code = searchParams.get("code");
-  const state = searchParams.get("state");
-  const errorParam = searchParams.get("error");
+  const redirectUri = getRedirectUri(req.url);
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || new URL("/", req.url).origin;
-  const redirectUri = `${appUrl}/api/auth/callback`;
-
-  // Step 1: Initiate OAuth flow
-  if (action === "login") {
-    const oauthState = crypto.randomBytes(16).toString("hex");
-
-    const authorizeUrl = buildOAuthAuthorizeUrl(
-      settings.gitlabUrl,
-      settings.clientId,
-      redirectUri,
-      oauthState,
+  // Step 1: start the OAuth flow
+  if (searchParams.get("action") === "login") {
+    const state = crypto.randomBytes(16).toString("hex");
+    const next = safeNext(searchParams.get("next"));
+    const res = NextResponse.redirect(
+      buildOAuthAuthorizeUrl(settings.gitlabUrl, settings.clientId, redirectUri, state),
     );
-
-    const response = NextResponse.redirect(authorizeUrl);
-    response.cookies.set("oauth_state", oauthState, {
+    res.cookies.set(STATE_COOKIE, JSON.stringify({ state, next }), {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: process.env.COOKIE_SECURE ? process.env.COOKIE_SECURE === "true" : process.env.NODE_ENV === "production",
       sameSite: "lax",
       maxAge: 600,
       path: "/",
     });
-    return response;
+    return res;
   }
 
-  // OAuth error
+  // Step 2: GitLab redirected back
+  const errorParam = searchParams.get("error");
   if (errorParam) {
-    const errorMsg = searchParams.get("error_description") || errorParam;
-    return NextResponse.redirect(
-      new URL(`/login?error=${encodeURIComponent(errorMsg)}`, req.url),
-    );
+    return loginError(req, searchParams.get("error_description") || errorParam);
   }
 
-  // Step 2: Handle OAuth callback
-  if (!code) {
-    return NextResponse.redirect(
-      new URL("/login?error=Ruxsat%20kodi%20topilmadi", req.url),
-    );
-  }
+  const code = searchParams.get("code");
+  if (!code) return loginError(req, "Authorization code is missing");
 
-  // Verify state
-  const savedState = req.cookies.get("oauth_state")?.value;
-  if (!savedState || savedState !== state) {
-    return NextResponse.redirect(
-      new URL("/login?error=CSRF%20tekshiruvi%20muvaffaqiyatsiz", req.url),
-    );
+  let saved: { state?: string; next?: string } = {};
+  try {
+    saved = JSON.parse(req.cookies.get(STATE_COOKIE)?.value || "{}");
+  } catch {
+    // ignore
+  }
+  if (!saved.state || saved.state !== searchParams.get("state")) {
+    return loginError(req, "Login session expired or CSRF check failed. Please try again.");
   }
 
   try {
-    // Exchange code for token
-    const tokenData = await exchangeCodeForToken(
+    const token = await exchangeCodeForToken(
       settings.gitlabUrl,
       settings.clientId,
       settings.clientSecret,
       code,
       redirectUri,
     );
+    const gitlabUser = await getGitLabUser(settings.gitlabUrl, token.access_token);
 
-    // Get user info
-    const gitlabUser = await getGitLabUser(settings.gitlabUrl, tokenData.access_token);
+    if (gitlabUser.state && gitlabUser.state !== "active") {
+      return loginError(req, `Your GitLab account is ${gitlabUser.state}.`);
+    }
 
-    // Create PAT for API calls
-    const pat = await createPAT(settings.gitlabUrl, tokenData.access_token, gitlabUser.id);
-
-    // Upsert user in DB
-    const existingUsers = await db
-      .select()
-      .from(users)
-      .where(eq(users.gitlabUserId, gitlabUser.id))
-      .limit(1);
-
-    let dbUserId: number;
-    const allUsers = await db.select().from(users).limit(1);
-    const isFirstUser = allUsers.length === 0;
-
-    if (existingUsers.length > 0) {
-      dbUserId = existingUsers[0].id;
+    // Upsert user. The first user ever becomes the Ombor admin.
+    const [existing] = await db.select().from(users).where(eq(users.gitlabUserId, gitlabUser.id)).limit(1);
+    let userId: number;
+    if (existing) {
+      if (existing.isBlocked) {
+        await logAudit({
+          action: "auth.login_failed",
+          targetType: "user",
+          target: gitlabUser.username,
+          status: "failure",
+          metadata: { reason: "blocked" },
+          actor: { userId: existing.id, username: existing.username },
+        });
+        return loginError(req, "Your access to Ombor has been blocked by an administrator.");
+      }
+      userId = existing.id;
       await db
         .update(users)
         .set({
@@ -110,9 +111,10 @@ export async function GET(req: NextRequest) {
           avatarUrl: gitlabUser.avatar_url,
           lastLoginAt: new Date(),
         })
-        .where(eq(users.id, dbUserId));
+        .where(eq(users.id, userId));
     } else {
-      const inserted = await db
+      const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(users);
+      const [inserted] = await db
         .insert(users)
         .values({
           gitlabUserId: gitlabUser.id,
@@ -120,32 +122,43 @@ export async function GET(req: NextRequest) {
           name: gitlabUser.name,
           email: gitlabUser.email,
           avatarUrl: gitlabUser.avatar_url,
-          isAdmin: isFirstUser,
+          isAdmin: count === 0,
           lastLoginAt: new Date(),
         })
         .returning({ id: users.id });
-      dbUserId = inserted[0].id;
+      userId = inserted.id;
     }
 
-    // Create session
+    // Token refresh must reuse the exact redirect_uri registered with GitLab.
+    if ((await getSetting("oauth_redirect_uri")) !== redirectUri) {
+      await setSetting("oauth_redirect_uri", redirectUri);
+    }
+
     await createSession({
-      userId: dbUserId,
-      gitlabUserId: gitlabUser.id,
-      username: gitlabUser.username,
-      name: gitlabUser.name,
-      avatarUrl: gitlabUser.avatar_url,
-      isAdmin: isFirstUser || existingUsers[0]?.isAdmin || false,
-      pat: pat.token,
+      userId,
+      accessToken: token.access_token,
+      refreshToken: token.refresh_token,
+      tokenExpiresIn: token.expires_in,
     });
 
-    // Clear oauth state cookie and redirect
-    const response = NextResponse.redirect(new URL("/dashboard", req.url));
-    response.cookies.delete("oauth_state");
-    return response;
+    await logAudit({
+      action: "auth.login",
+      targetType: "user",
+      target: gitlabUser.username,
+      actor: { userId, username: gitlabUser.username },
+    });
+
+    const res = NextResponse.redirect(new URL(safeNext(saved.next), req.url));
+    res.cookies.delete(STATE_COOKIE);
+    return res;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Autentifikatsiya xatosi";
-    return NextResponse.redirect(
-      new URL(`/login?error=${encodeURIComponent(msg)}`, req.url),
-    );
+    console.error("[ombor] OAuth callback failed", e);
+    const cause = (e as { cause?: { code?: string } })?.cause?.code;
+    const msg = cause?.includes("CERT")
+      ? `Cannot verify GitLab TLS certificate (${cause}). Configure NODE_EXTRA_CA_CERTS.`
+      : e instanceof Error
+        ? e.message
+        : "Authentication failed";
+    return loginError(req, msg);
   }
 }

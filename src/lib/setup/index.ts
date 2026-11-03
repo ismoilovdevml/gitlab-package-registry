@@ -2,7 +2,8 @@ import "server-only";
 
 import { db } from "@/lib/db";
 import { settings } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { decrypt, encrypt } from "@/lib/crypto";
+import { eq, inArray } from "drizzle-orm";
 import { cache } from "react";
 
 export interface AppSettings {
@@ -12,52 +13,66 @@ export interface AppSettings {
   setupComplete: boolean;
 }
 
-async function getSetting(key: string): Promise<string | null> {
-  try {
-    const result = await db
-      .select()
-      .from(settings)
-      .where(eq(settings.key, key))
-      .limit(1);
-    return result[0]?.value ?? null;
-  } catch {
-    return null;
+export function normalizeGitlabUrl(url: string): string {
+  const trimmed = url.trim().replace(/\/+$/, "");
+  const parsed = new URL(trimmed);
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error("GitLab URL must start with http:// or https://");
   }
+  return trimmed;
 }
 
-async function setSetting(key: string, value: string, encrypted = false) {
+async function readSettings(keys: string[]): Promise<Record<string, string>> {
+  const rows = await db.select().from(settings).where(inArray(settings.key, keys));
+  const out: Record<string, string> = {};
+  for (const row of rows) {
+    out[row.key] = row.encrypted ? decrypt(row.value) : row.value;
+  }
+  return out;
+}
+
+export async function getSetting(key: string): Promise<string | null> {
+  const values = await readSettings([key]);
+  return values[key] ?? null;
+}
+
+export async function setSetting(key: string, value: string, encrypted = false) {
+  const stored = encrypted ? encrypt(value) : value;
   await db
     .insert(settings)
-    .values({ key, value, encrypted, updatedAt: new Date() })
+    .values({ key, value: stored, encrypted, updatedAt: new Date() })
     .onConflictDoUpdate({
       target: settings.key,
-      set: { value, encrypted, updatedAt: new Date() },
+      set: { value: stored, encrypted, updatedAt: new Date() },
     });
 }
 
+export async function deleteSetting(key: string) {
+  await db.delete(settings).where(eq(settings.key, key));
+}
+
 export const getSettings = cache(async (): Promise<AppSettings | null> => {
-  const setupComplete = await getSetting("setup_complete");
-  if (setupComplete !== "true") return null;
-
-  const [gitlabUrl, clientId, clientSecret] = await Promise.all([
-    getSetting("gitlab_url"),
-    getSetting("oauth_client_id"),
-    getSetting("oauth_client_secret"),
+  const values = await readSettings([
+    "setup_complete",
+    "gitlab_url",
+    "oauth_client_id",
+    "oauth_client_secret",
   ]);
+  if (values.setup_complete !== "true") return null;
 
-  if (!gitlabUrl || !clientId || !clientSecret) return null;
+  const { gitlab_url, oauth_client_id, oauth_client_secret } = values;
+  if (!gitlab_url || !oauth_client_id || !oauth_client_secret) return null;
 
   return {
-    gitlabUrl,
-    clientId,
-    clientSecret,
+    gitlabUrl: gitlab_url,
+    clientId: oauth_client_id,
+    clientSecret: oauth_client_secret,
     setupComplete: true,
   };
 });
 
 export const isSetupComplete = cache(async (): Promise<boolean> => {
-  const result = await getSetting("setup_complete");
-  return result === "true";
+  return (await getSetting("setup_complete")) === "true";
 });
 
 export async function saveSetupSettings(data: {
@@ -65,10 +80,9 @@ export async function saveSetupSettings(data: {
   clientId: string;
   clientSecret: string;
 }) {
-  await Promise.all([
-    setSetting("gitlab_url", data.gitlabUrl),
-    setSetting("oauth_client_id", data.clientId),
-    setSetting("oauth_client_secret", data.clientSecret, true),
-    setSetting("setup_complete", "true"),
-  ]);
+  // setup_complete is written last, so a partial failure leaves setup incomplete.
+  await setSetting("gitlab_url", normalizeGitlabUrl(data.gitlabUrl));
+  await setSetting("oauth_client_id", data.clientId.trim());
+  await setSetting("oauth_client_secret", data.clientSecret.trim(), true);
+  await setSetting("setup_complete", "true");
 }

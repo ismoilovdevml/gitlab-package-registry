@@ -1,52 +1,222 @@
-import type { PackageType } from "./types";
+// Install / registry-setup snippets per package format. Safe for client and server components.
+// Tokens are always placeholders — never inject a real credential into a snippet.
 
-export function getInstallCommand(
-  packageType: PackageType,
-  packageName: string,
-  version: string,
-  gitlabUrl: string,
-  projectPath?: string,
-): string {
-  const registryUrl = `${gitlabUrl}/api/v4/projects/${encodeURIComponent(projectPath || "")}/packages`;
+export interface InstallContext {
+  gitlabUrl: string;
+  projectId: number;
+  projectPath?: string;
+  groupId?: number;
+}
 
-  switch (packageType) {
+export interface Snippet {
+  label: string;
+  language: "bash" | "xml" | "ini" | "json" | "text";
+  code: string;
+}
+
+const TOKEN = "<your_token>";
+
+export function projectRegistryUrl(ctx: InstallContext, format: string): string {
+  return `${ctx.gitlabUrl}/api/v4/projects/${ctx.projectId}/packages/${format}`;
+}
+
+function host(gitlabUrl: string) {
+  return gitlabUrl.replace(/^https?:\/\//, "");
+}
+
+function mavenCoordinates(name: string) {
+  // GitLab stores Maven packages as "com/acme/app" or "com.acme/app"
+  const parts = name.split("/");
+  const artifactId = parts.pop() || name;
+  const groupId = parts.join(".") || artifactId;
+  return { groupId, artifactId };
+}
+
+/** Snippets to configure a client for this project's registry (no specific package). */
+export function getRegistrySetupSnippets(format: string, ctx: InstallContext): Snippet[] {
+  const url = projectRegistryUrl(ctx, format);
+  switch (format) {
     case "npm":
-      return `npm install ${packageName}@${version}`;
+      return [
+        {
+          label: ".npmrc",
+          language: "ini",
+          code: `@<your-scope>:registry=${url}/\n//${host(url)}/:_authToken=\${GITLAB_TOKEN}`,
+        },
+      ];
     case "maven":
-      return `<dependency>\n  <groupId>${packageName.split("/")[0] || packageName}</groupId>\n  <artifactId>${packageName.split("/")[1] || packageName}</artifactId>\n  <version>${version}</version>\n</dependency>`;
+      return [
+        {
+          label: "pom.xml",
+          language: "xml",
+          code: `<repositories>\n  <repository>\n    <id>gitlab-maven</id>\n    <url>${url}</url>\n  </repository>\n</repositories>`,
+        },
+        {
+          label: "~/.m2/settings.xml",
+          language: "xml",
+          code: `<servers>\n  <server>\n    <id>gitlab-maven</id>\n    <configuration>\n      <httpHeaders>\n        <property>\n          <name>Private-Token</name>\n          <value>${TOKEN}</value>\n        </property>\n      </httpHeaders>\n    </configuration>\n  </server>\n</servers>`,
+        },
+      ];
     case "pypi":
-      return `pip install ${packageName}==${version}`;
+      return [
+        {
+          label: "pip.conf",
+          language: "ini",
+          code: `[global]\nindex-url = https://__token__:${TOKEN}@${host(url)}/simple`,
+        },
+        {
+          label: "Upload with twine",
+          language: "bash",
+          code: `TWINE_USERNAME=__token__ TWINE_PASSWORD=${TOKEN} \\\n  python -m twine upload --repository-url ${url} dist/*`,
+        },
+      ];
     case "nuget":
-      return `dotnet add package ${packageName} --version ${version}`;
+      return [
+        {
+          label: "Add source",
+          language: "bash",
+          code: `dotnet nuget add source "${url}/index.json" \\\n  --name gitlab --username <username> --password ${TOKEN} --store-password-in-clear-text`,
+        },
+      ];
     case "golang":
-      return `go get ${packageName}@v${version}`;
+      return [
+        {
+          label: "Environment",
+          language: "bash",
+          code: `export GOPROXY=${url},https://proxy.golang.org,direct\nexport GONOSUMDB=${host(ctx.gitlabUrl)}\n# ~/.netrc\nmachine ${host(ctx.gitlabUrl)} login <username> password ${TOKEN}`,
+        },
+      ];
     case "composer":
-      return `composer require ${packageName}:${version}`;
+      return [
+        {
+          label: "composer.json",
+          language: "json",
+          code: `{\n  "repositories": [\n    { "type": "composer", "url": "${ctx.gitlabUrl}/api/v4/group/${ctx.groupId ?? "<group_id>"}/-/packages/composer/packages.json" }\n  ]\n}`,
+        },
+      ];
     case "conan":
-      return `conan install ${packageName}/${version}@`;
+      return [
+        {
+          label: "Add remote",
+          language: "bash",
+          code: `conan remote add gitlab ${url}\nconan remote login gitlab <username> -p ${TOKEN}`,
+        },
+      ];
     case "helm":
-      return `helm install ${packageName} --version ${version}`;
-    case "generic":
-      return `curl --header "PRIVATE-TOKEN: <token>" "${registryUrl}/generic/${packageName}/${version}/<file_name>"`;
-    case "docker":
-      return `docker pull ${gitlabUrl.replace(/^https?:\/\//, "")}/${projectPath || "<project>"}/${packageName}:${version}`;
+      return [
+        {
+          label: "Add repo",
+          language: "bash",
+          code: `helm repo add --username <username> --password ${TOKEN} gitlab ${url}/stable\nhelm repo update`,
+        },
+      ];
+    case "rubygems":
+      return [
+        { label: "~/.gem/credentials", language: "text", code: `---\n${url}: '${TOKEN}'` },
+      ];
+    case "debian":
+      return [
+        {
+          label: "sources.list",
+          language: "text",
+          code: `deb [ trusted=yes ] ${url}/debian <distribution> main`,
+        },
+      ];
+    case "terraform_module":
+      return [
+        {
+          label: "~/.terraformrc",
+          language: "text",
+          code: `credentials "${host(ctx.gitlabUrl)}" {\n  token = "${TOKEN}"\n}`,
+        },
+      ];
+    case "container":
+      return [
+        {
+          label: "Login",
+          language: "bash",
+          code: `docker login <registry-host> -u <username> -p ${TOKEN}`,
+        },
+      ];
     default:
-      return `# ${packageType}: ${packageName}@${version}`;
+      return [
+        {
+          label: "Upload",
+          language: "bash",
+          code: `curl --fail-with-body --header "PRIVATE-TOKEN: ${TOKEN}" \\\n  --upload-file ./file.tar.gz \\\n  "${url}/generic/<name>/<version>/file.tar.gz"`,
+        },
+      ];
   }
 }
 
-export function getPackageTypeColor(type: PackageType): string {
-  const colors: Record<PackageType, string> = {
-    npm: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
-    maven: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400",
-    pypi: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
-    docker: "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-400",
-    nuget: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400",
-    golang: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-400",
-    composer: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400",
-    conan: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
-    helm: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-400",
-    generic: "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400",
-  };
-  return colors[type] || colors.generic;
+/** Snippets to install a specific package version. */
+export function getInstallSnippets(
+  pkg: { packageType: string; name: string; version: string; fileName?: string },
+  ctx: InstallContext,
+): Snippet[] {
+  const { packageType, name, version } = pkg;
+  const url = projectRegistryUrl(ctx, packageType);
+  switch (packageType) {
+    case "npm":
+      return [
+        { label: "npm", language: "bash", code: `npm install ${name}@${version}` },
+        { label: "pnpm", language: "bash", code: `pnpm add ${name}@${version}` },
+        { label: "yarn", language: "bash", code: `yarn add ${name}@${version}` },
+      ];
+    case "maven": {
+      const { groupId, artifactId } = mavenCoordinates(name);
+      return [
+        {
+          label: "Maven",
+          language: "xml",
+          code: `<dependency>\n  <groupId>${groupId}</groupId>\n  <artifactId>${artifactId}</artifactId>\n  <version>${version}</version>\n</dependency>`,
+        },
+        { label: "Gradle", language: "text", code: `implementation '${groupId}:${artifactId}:${version}'` },
+      ];
+    }
+    case "pypi":
+      return [
+        {
+          label: "pip",
+          language: "bash",
+          code: `pip install ${name}==${version} \\\n  --index-url https://__token__:${TOKEN}@${host(url)}/simple`,
+        },
+      ];
+    case "nuget":
+      return [{ label: "dotnet", language: "bash", code: `dotnet add package ${name} --version ${version}` }];
+    case "golang":
+      return [{ label: "go", language: "bash", code: `GOPROXY=${url} go get ${name}@${version}` }];
+    case "composer":
+      return [{ label: "composer", language: "bash", code: `composer require ${name}:${version}` }];
+    case "conan":
+      return [{ label: "conan", language: "bash", code: `conan install --requires=${name}/${version} -r gitlab` }];
+    case "helm":
+      return [
+        {
+          label: "helm",
+          language: "bash",
+          code: `helm repo add --username <username> --password ${TOKEN} gitlab ${url}/stable\nhelm install ${name} gitlab/${name} --version ${version}`,
+        },
+      ];
+    case "rubygems":
+      return [{ label: "gem", language: "bash", code: `gem install ${name} -v ${version} --source "${url}"` }];
+    case "terraform_module":
+      return [
+        {
+          label: "Terraform",
+          language: "text",
+          code: `module "${name.split("/")[0]}" {\n  source  = "${host(ctx.gitlabUrl)}/${ctx.projectPath ?? "<namespace>"}/${name}"\n  version = "${version}"\n}`,
+        },
+      ];
+    case "container":
+      return [{ label: "docker", language: "bash", code: `docker pull ${name}:${version}` }];
+    default:
+      return [
+        {
+          label: "curl",
+          language: "bash",
+          code: `curl --fail-with-body --header "PRIVATE-TOKEN: ${TOKEN}" \\\n  -o "${pkg.fileName ?? "<file_name>"}" \\\n  "${url}/generic/${encodeURIComponent(name)}/${encodeURIComponent(version)}/${pkg.fileName ?? "<file_name>"}"`,
+        },
+      ];
+  }
 }

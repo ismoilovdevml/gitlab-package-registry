@@ -1,56 +1,67 @@
 import "server-only";
 
-import { createGitLabClient } from "./client";
+import { buildQuery, type GitLabClient } from "./client";
 import type { GitLabProject, PaginatedResponse } from "./types";
 
 export interface ProjectSearchParams {
   page?: number;
   per_page?: number;
   search?: string;
-  order_by?: "id" | "name" | "path" | "created_at" | "updated_at" | "last_activity_at";
+  order_by?: "id" | "name" | "path" | "created_at" | "updated_at" | "last_activity_at" | "storage_size";
   sort?: "asc" | "desc";
-  with_packages_enabled?: boolean;
+  membership?: boolean;
+  statistics?: boolean;
+  min_access_level?: number;
+  include_subgroups?: boolean;
+  simple?: boolean;
+  archived?: boolean;
 }
 
-export function createProjectApi(client: ReturnType<typeof createGitLabClient>) {
+function projectQuery(params: ProjectSearchParams) {
+  return buildQuery({
+    search: params.search,
+    order_by: params.order_by,
+    sort: params.sort,
+    membership: params.membership,
+    statistics: params.statistics,
+    min_access_level: params.min_access_level,
+    include_subgroups: params.include_subgroups,
+    simple: params.simple,
+    archived: params.archived,
+  });
+}
+
+export function createProjectApi(client: GitLabClient) {
   return {
-    async listProjects(
-      params: ProjectSearchParams = {},
-    ): Promise<PaginatedResponse<GitLabProject>> {
-      const searchParams = new URLSearchParams();
-      if (params.search) searchParams.set("search", params.search);
-      if (params.order_by) searchParams.set("order_by", params.order_by);
-      if (params.sort) searchParams.set("sort", params.sort);
-
-      const query = searchParams.toString();
-      const path = `/projects${query ? `?${query}` : ""}`;
-
-      return client.requestPaginated<GitLabProject>(path, {
+    listProjects(params: ProjectSearchParams = {}): Promise<PaginatedResponse<GitLabProject>> {
+      return client.requestPaginated<GitLabProject>(`/projects${projectQuery(params)}`, {
         page: params.page || 1,
         per_page: params.per_page || 20,
       });
     },
 
-    async listGroupProjects(
-      groupId: number,
-      params: ProjectSearchParams = {},
-    ): Promise<PaginatedResponse<GitLabProject>> {
-      const searchParams = new URLSearchParams();
-      if (params.search) searchParams.set("search", params.search);
-      if (params.order_by) searchParams.set("order_by", params.order_by);
-      if (params.sort) searchParams.set("sort", params.sort);
-
-      const query = searchParams.toString();
-      const path = `/groups/${groupId}/projects${query ? `?${query}` : ""}`;
-
-      return client.requestPaginated<GitLabProject>(path, {
+    listGroupProjects(groupId: number, params: ProjectSearchParams = {}): Promise<PaginatedResponse<GitLabProject>> {
+      return client.requestPaginated<GitLabProject>(`/groups/${groupId}/projects${projectQuery(params)}`, {
         page: params.page || 1,
         per_page: params.per_page || 20,
       });
     },
 
-    async getProject(projectId: number): Promise<GitLabProject> {
-      return client.request<GitLabProject>(`/projects/${projectId}`);
+    /** Every project the user is a member of (bounded). */
+    listAllMemberProjects(params: Omit<ProjectSearchParams, "page" | "per_page"> = {}, maxItems = 1000) {
+      return client.requestAll<GitLabProject>(
+        `/projects${projectQuery({ membership: true, archived: false, order_by: "last_activity_at", ...params })}`,
+        { maxItems },
+      );
+    },
+
+    /** `id` may be a numeric id or a full path ("group/sub/project"). */
+    getProject(id: number | string, opts: { statistics?: boolean } = {}): Promise<GitLabProject> {
+      return client.request<GitLabProject>(
+        `/projects/${encodeURIComponent(String(id))}${buildQuery({ statistics: opts.statistics })}`,
+      );
     },
   };
 }
+
+export type ProjectApi = ReturnType<typeof createProjectApi>;
