@@ -20,7 +20,7 @@ env:
 jobs:
   checks:
     name: Lint, typecheck, unit tests, build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
@@ -37,7 +37,7 @@ jobs:
 
   e2e:
     name: End-to-end (Playwright + mock GitLab)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
       postgres:
@@ -75,7 +75,7 @@ jobs:
   docker:
     name: Docker image
     needs: [checks, e2e]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
       contents: read
