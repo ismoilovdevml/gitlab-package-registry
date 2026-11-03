@@ -3,4 +3,7 @@ export async function register() {
   const { ensureSchema } = await import("@/lib/db");
   await ensureSchema();
   console.log("[ombor] database schema ready");
+
+  const { startCleanupScheduler } = await import("@/lib/cleanup/scheduler");
+  startCleanupScheduler();
 }
