@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
@@ -53,7 +53,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://ombor:ombor@localhost:5432/ombor_e2e
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
@@ -92,7 +92,7 @@ jobs:
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/ombor
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v3
 
       - name: Build image
