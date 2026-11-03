@@ -95,7 +95,7 @@ src/app/          routes: (app) signed-in pages, (auth) sign-in, (setup) wizard,
 src/lib/          gitlab client & APIs, session, db, audit, per-feature logic
 src/components/   ui primitives and shared Ombor components
 e2e/              Playwright specs and the mock GitLab server
-docs/             screenshots, design source, planning notes
+docs/             screenshots
 ```
 
 **Stack:** Next.js 16, React 19, Tailwind CSS 4, PostgreSQL with Drizzle.
