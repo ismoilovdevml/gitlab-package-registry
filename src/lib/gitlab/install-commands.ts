@@ -126,7 +126,7 @@ export function getRegistrySetupSnippets(format: string, ctx: InstallContext): S
         {
           label: "sources.list",
           language: "text",
-          code: `deb [ trusted=yes ] ${url}/debian <distribution> main`,
+          code: `deb [ trusted=yes ] ${url} <distribution> main`,
         },
       ];
     case "terraform_module":

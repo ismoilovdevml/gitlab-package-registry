@@ -23,10 +23,14 @@ export function encrypt(plaintext: string): string {
 
 export function decrypt(payload: string): string {
   const [prefix, iv, tag, data] = payload.split(".");
-  if (prefix !== PREFIX || !iv || !tag || !data) {
+  // `data` may be "" (empty plaintext), so only reject it when the segment is missing.
+  if (prefix !== PREFIX || !iv || !tag || data === undefined) {
     throw new Error("Invalid encrypted payload");
   }
-  const decipher = crypto.createDecipheriv("aes-256-gcm", getKey(), Buffer.from(iv, "base64url"));
+  // Pin the tag length: without it older Node versions accept truncated (forgeable) GCM tags.
+  const decipher = crypto.createDecipheriv("aes-256-gcm", getKey(), Buffer.from(iv, "base64url"), {
+    authTagLength: 16,
+  });
   decipher.setAuthTag(Buffer.from(tag, "base64url"));
   return Buffer.concat([decipher.update(Buffer.from(data, "base64url")), decipher.final()]).toString("utf8");
 }
