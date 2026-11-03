@@ -20,6 +20,10 @@ export function projectRegistryUrl(ctx: InstallContext, format: string): string 
   return `${ctx.gitlabUrl}/api/v4/projects/${ctx.projectId}/packages/${format}`;
 }
 
+function scheme(gitlabUrl: string) {
+  return gitlabUrl.startsWith("http://") ? "http" : "https";
+}
+
 function host(gitlabUrl: string) {
   return gitlabUrl.replace(/^https?:\/\//, "");
 }
@@ -41,7 +45,7 @@ export function getRegistrySetupSnippets(format: string, ctx: InstallContext): S
         {
           label: ".npmrc",
           language: "ini",
-          code: `@<your-scope>:registry=${url}/\n//${host(url)}/:_authToken=\${GITLAB_TOKEN}`,
+          code: `@<your-scope>:registry=${url}/\n//${host(url)}/:_authToken=${TOKEN}`,
         },
       ];
     case "maven":
@@ -62,7 +66,7 @@ export function getRegistrySetupSnippets(format: string, ctx: InstallContext): S
         {
           label: "pip.conf",
           language: "ini",
-          code: `[global]\nindex-url = https://__token__:${TOKEN}@${host(url)}/simple`,
+          code: `[global]\nindex-url = ${scheme(url)}://__token__:${TOKEN}@${host(url)}/simple`,
         },
         {
           label: "Upload with twine",
@@ -143,7 +147,7 @@ export function getRegistrySetupSnippets(format: string, ctx: InstallContext): S
         {
           label: "Upload",
           language: "bash",
-          code: `curl --fail-with-body --header "PRIVATE-TOKEN: ${TOKEN}" \\\n  --upload-file ./file.tar.gz \\\n  "${url}/generic/<name>/<version>/file.tar.gz"`,
+          code: `curl --fail-with-body --header "PRIVATE-TOKEN: ${TOKEN}" \\\n  --upload-file ./file.tar.gz \\\n  "${url}/<name>/<version>/file.tar.gz"`,
         },
       ];
   }
@@ -179,7 +183,7 @@ export function getInstallSnippets(
         {
           label: "pip",
           language: "bash",
-          code: `pip install ${name}==${version} \\\n  --index-url https://__token__:${TOKEN}@${host(url)}/simple`,
+          code: `pip install ${name}==${version} \\\n  --index-url ${scheme(url)}://__token__:${TOKEN}@${host(url)}/simple`,
         },
       ];
     case "nuget":
@@ -215,7 +219,7 @@ export function getInstallSnippets(
         {
           label: "curl",
           language: "bash",
-          code: `curl --fail-with-body --header "PRIVATE-TOKEN: ${TOKEN}" \\\n  -o "${pkg.fileName ?? "<file_name>"}" \\\n  "${url}/generic/${encodeURIComponent(name)}/${encodeURIComponent(version)}/${pkg.fileName ?? "<file_name>"}"`,
+          code: `curl --fail-with-body --header "PRIVATE-TOKEN: ${TOKEN}" \\\n  -o "${pkg.fileName ?? "<file_name>"}" \\\n  "${url}/${encodeURIComponent(name)}/${encodeURIComponent(version)}/${pkg.fileName ?? "<file_name>"}"`,
         },
       ];
   }
