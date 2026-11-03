@@ -16,7 +16,6 @@ playwright.config.ts
 vitest.config.ts
 playwright-report
 test-results
-.playwright-mcp
 docs
 *.md
 *.zip
