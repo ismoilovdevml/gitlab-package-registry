@@ -76,7 +76,9 @@ export function createPackageApi(client: GitLabClient) {
     },
 
     getPackagePipelines(projectId: number, packageId: number): Promise<GitLabPipelineRef[]> {
+      // This endpoint is keyset-paginated and rejects per_page > 20.
       return client.requestAll<GitLabPipelineRef>(`/projects/${projectId}/packages/${packageId}/pipelines`, {
+        perPage: 20,
         maxItems: 100,
       });
     },
