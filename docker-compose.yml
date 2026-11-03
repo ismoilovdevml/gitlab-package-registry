@@ -1,32 +1,37 @@
 services:
   app:
     build: .
+    image: ombor:latest
     ports:
-      - "3000:3000"
+      - "${OMBOR_PORT:-3000}:3000"
     environment:
-      - DATABASE_URL=postgresql://glpr:glpr_secret@db:5432/glpr
-      - SESSION_SECRET=${SESSION_SECRET}
-      - NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-}
+      DATABASE_URL: postgresql://ombor:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/ombor
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env (openssl rand -base64 48)}
+      APP_URL: ${APP_URL:?set APP_URL in .env, e.g. https://ombor.example.com}
+      COOKIE_SECURE: ${COOKIE_SECURE:-}
+      CLEANUP_INTERVAL_MINUTES: ${CLEANUP_INTERVAL_MINUTES:-1440}
+      # Self-signed GitLab: put your CA bundle in ./certs/ca.crt and uncomment the line below.
+      # NODE_EXTRA_CA_CERTS: /certs/ca.crt
+    # volumes:
+    #   - ./certs:/certs:ro
     depends_on:
       db:
         condition: service_healthy
     restart: unless-stopped
 
   db:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     environment:
-      POSTGRES_USER: glpr
-      POSTGRES_PASSWORD: glpr_secret
-      POSTGRES_DB: glpr
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ombor
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ombor
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U glpr"]
+      test: ["CMD-SHELL", "pg_isready -U ombor -d ombor"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
     restart: unless-stopped
 
 volumes:
