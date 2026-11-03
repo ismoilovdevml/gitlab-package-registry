@@ -1,5 +1,7 @@
 # Ombor
 
+[![CI](https://github.com/ismoilovdevml/gitlab-package-registry/actions/workflows/ci.yml/badge.svg)](https://github.com/ismoilovdevml/gitlab-package-registry/actions/workflows/ci.yml)
+
 **A Nexus/Artifactory-style UI for the self-hosted GitLab Package & Container Registry.**
 
 Browse, search, publish and clean up packages across every GitLab group from one place.
@@ -35,7 +37,7 @@ Users sign in with GitLab; every request runs with their own token, so GitLab ro
 2. **Run Ombor:**
    ```bash
    cp .env.example .env   # set APP_URL, SESSION_SECRET, POSTGRES_PASSWORD
-   docker compose up -d --build
+   docker compose up -d --build   # or pull ghcr.io/ismoilovdevml/ombor:latest
    ```
 3. **Open `APP_URL`.** The setup wizard asks for the GitLab URL and the OAuth Client ID/Secret.
    **The first user to sign in becomes the admin.**
@@ -74,10 +76,26 @@ Scheduled cleanup needs a service token (`api` scope, Maintainer), which is also
 
 ```bash
 pnpm install
-cp .env.example .env.local
+cp .env.example .env.local   # DATABASE_URL, SESSION_SECRET, APP_URL
 pnpm dev
 ```
 
-The database schema is applied automatically on startup. Checks: `pnpm exec tsc --noEmit`, `pnpm lint`, `pnpm build`.
+The database schema is applied automatically on startup.
+
+| Command | What it does |
+|---|---|
+| `pnpm lint` / `pnpm typecheck` | ESLint, TypeScript |
+| `pnpm test` | Unit tests (Vitest) |
+| `pnpm build && pnpm test:e2e` | End-to-end tests (Playwright) against the production build and a mock GitLab (`e2e/mock-gitlab.mjs`); needs `DATABASE_URL` |
+
+CI runs all of the above on every push and PR. The Docker image is smoke-tested and then pushed to `ghcr.io/ismoilovdevml/ombor` (multi-arch, tags `latest`, `sha-…`, `vX.Y.Z`).
+
+```
+src/app/          routes: (app) signed-in pages, (auth) sign-in, (setup) wizard, api/
+src/lib/          gitlab client & APIs, session, db, audit, per-feature logic
+src/components/   ui primitives and shared Ombor components
+e2e/              Playwright specs and the mock GitLab server
+docs/             screenshots, design source, planning notes
+```
 
 **Stack:** Next.js 16, React 19, Tailwind CSS 4, PostgreSQL with Drizzle.
