@@ -38,7 +38,10 @@ export async function requireProjectAccess(
   action = "perform this action",
 ): Promise<void> {
   const level = await getProjectAccessLevel(client, projectId);
-  if (level < minLevel) {
+  if (level >= minLevel) return;
+  // GitLab instance admins can act on any project without being a member.
+  const user = await client.getCurrentUser().catch(() => null);
+  if (!user?.is_admin) {
     throw new PermissionDeniedError(
       `You need ${accessLevelName(minLevel)} access to ${action} (you have ${accessLevelName(level)}).`,
     );
