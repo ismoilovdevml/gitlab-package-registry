@@ -17,6 +17,8 @@ export const sql =
   postgres(process.env.DATABASE_URL || "postgres://missing-database-url", {
     max: 10,
     onnotice: () => {},
+    // Columns are `timestamp` without time zone: pin the session to UTC so now() and JS Dates agree.
+    connection: { TimeZone: "UTC" },
   });
 if (process.env.NODE_ENV !== "production") globalForDb.omborSql = sql;
 
