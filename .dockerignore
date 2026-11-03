@@ -1,0 +1,22 @@
+# Keep the build context small and free of secrets.
+.git
+.github
+node_modules
+.next
+out
+coverage
+.env*
+!.env.example
+
+# Tests, docs and local artifacts are not needed in the image
+e2e
+playwright-report
+test-results
+.playwright-mcp
+docs
+*.md
+*.zip
+
+Dockerfile
+docker-compose*.yml
+.dockerignore

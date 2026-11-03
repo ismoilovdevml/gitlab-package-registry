@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    image: ombor:latest
+    image: ghcr.io/ismoilovdevml/ombor:${OMBOR_VERSION:-latest}
     ports:
       - "${OMBOR_PORT:-3000}:3000"
     environment:

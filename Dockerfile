@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1
-FROM node:22-alpine AS base
+ARG NODE_VERSION=24
+
+FROM node:${NODE_VERSION}-alpine AS base
 ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH NEXT_TELEMETRY_DISABLED=1
-RUN corepack enable && corepack prepare pnpm@12.16.1 --activate
+# npm install avoids corepack signature-key issues with new pnpm releases
+RUN npm install -g pnpm@12.16.1 && npm cache clean --force
 
 # --- Dependencies ---
 FROM base AS deps
@@ -17,9 +20,13 @@ COPY . .
 RUN mkdir -p public && pnpm build
 
 # --- Runtime ---
-FROM node:22-alpine AS runner
+FROM node:${NODE_VERSION}-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
+
+LABEL org.opencontainers.image.title="Ombor" \
+      org.opencontainers.image.description="Web UI for the self-hosted GitLab Package & Container Registry" \
+      org.opencontainers.image.source="https://github.com/ismoilovdevml/gitlab-package-registry"
 
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
 
