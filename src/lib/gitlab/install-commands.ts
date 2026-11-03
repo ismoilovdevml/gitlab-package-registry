@@ -16,8 +16,11 @@ export interface Snippet {
 
 const TOKEN = "<your_token>";
 
+// API path segment per format where it differs from the package_type name.
+const REGISTRY_SEGMENT: Record<string, string> = { golang: "go", terraform_module: "terraform/modules" };
+
 export function projectRegistryUrl(ctx: InstallContext, format: string): string {
-  return `${ctx.gitlabUrl}/api/v4/projects/${ctx.projectId}/packages/${format}`;
+  return `${ctx.gitlabUrl}/api/v4/projects/${ctx.projectId}/packages/${REGISTRY_SEGMENT[format] ?? format}`;
 }
 
 function scheme(gitlabUrl: string) {

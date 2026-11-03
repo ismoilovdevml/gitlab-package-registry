@@ -7,6 +7,8 @@ export interface ProjectSearchParams {
   page?: number;
   per_page?: number;
   search?: string;
+  /** Match `search` against "group/project" paths too. */
+  search_namespaces?: boolean;
   order_by?: "id" | "name" | "path" | "created_at" | "updated_at" | "last_activity_at" | "storage_size";
   sort?: "asc" | "desc";
   membership?: boolean;
@@ -20,6 +22,7 @@ export interface ProjectSearchParams {
 function projectQuery(params: ProjectSearchParams) {
   return buildQuery({
     search: params.search,
+    search_namespaces: params.search_namespaces,
     order_by: params.order_by,
     sort: params.sort,
     membership: params.membership,
